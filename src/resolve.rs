@@ -26,10 +26,16 @@ pub struct Agent {
     pub agent: String,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub foreground_cwd: Option<String>,
     #[serde(rename = "agent_session", default)]
     pub session: Option<AgentSession>,
-    #[serde(rename = "terminal_title_stripped", alias = "terminal_title", default)]
+    // herdr reports both forms; a serde alias would make the two collide as
+    // a duplicate field when the JSON carries both, so they stay two fields
+    #[serde(default)]
     pub terminal_title_stripped: Option<String>,
+    #[serde(default)]
+    pub terminal_title: Option<String>,
 }
 
 impl Agent {
@@ -37,9 +43,19 @@ impl Agent {
     pub fn display_title(&self) -> String {
         self.terminal_title_stripped
             .as_deref()
+            .or(self.terminal_title.as_deref())
             .unwrap_or("")
             .trim()
             .to_string()
+    }
+
+    /// The pane's working directory: the focused cwd when herdr reports one,
+    /// the foreground cwd otherwise.
+    pub fn cwd_path(&self) -> Option<&str> {
+        self.cwd
+            .as_deref()
+            .filter(|c| !c.is_empty())
+            .or(self.foreground_cwd.as_deref().filter(|c| !c.is_empty()))
     }
 }
 

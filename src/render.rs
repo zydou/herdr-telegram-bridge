@@ -109,10 +109,10 @@ pub struct Target {
 
 impl Target {
     pub fn from_agent(a: &Agent, home: &str) -> Target {
-        let folder = match &a.cwd {
-            Some(cwd) if !cwd.is_empty() => shorten_home(cwd, home),
-            _ => String::new(),
-        };
+        let folder = a
+            .cwd_path()
+            .map(|cwd| shorten_home(cwd, home))
+            .unwrap_or_default();
         Target {
             pane: a.pane_id.clone(),
             agent: a.agent.clone(),
@@ -520,7 +520,9 @@ mod tests {
             pane_id: "w1:p9".into(),
             agent: "claude".into(),
             cwd: Some("/home/someone/proj".into()),
+            foreground_cwd: None,
             terminal_title_stripped: None,
+            terminal_title: None,
             session: None,
         };
         assert_eq!(Target::from_agent(&a, "/home/someone").folder, "~/proj");
@@ -528,5 +530,12 @@ mod tests {
             Target::from_agent(&a, "/other").folder,
             "/home/someone/proj"
         );
+        // cwd missing: the foreground cwd stands in
+        let fg = Agent {
+            cwd: None,
+            foreground_cwd: Some("/home/someone/other".into()),
+            ..a
+        };
+        assert_eq!(Target::from_agent(&fg, "/home/someone").folder, "~/other");
     }
 }

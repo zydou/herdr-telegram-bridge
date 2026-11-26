@@ -96,12 +96,9 @@ impl Feed {
             if agent.agent != "claude" {
                 continue; // claude-only: no other agent's transcripts are read
             }
-            let Some(tf) = resolve::session_file(
-                &self.home,
-                agent.session.as_ref(),
-                agent.cwd.as_deref(),
-                now,
-            ) else {
+            let Some(tf) =
+                resolve::session_file(&self.home, agent.session.as_ref(), agent.cwd_path(), now)
+            else {
                 continue;
             };
             // two panes can resolve to one file (compaction keeps parent and
@@ -118,7 +115,7 @@ impl Feed {
                 &cfg,
                 &target,
                 &agent.display_title(),
-                agent.cwd.as_deref().unwrap_or(""),
+                agent.cwd_path().unwrap_or(""),
                 &enabled,
             );
             by_pane.entry(target.pane.clone()).or_default().extend(msgs);
