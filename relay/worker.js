@@ -1,4 +1,4 @@
-// herdr-telegram relay: a thin outbound proxy between devices and one bot token.
+// herdr-relay worker: a thin outbound proxy between devices and one bot token.
 //
 // Devices never hold the bot token. They speak the standard Bot API against this
 // Worker with RELAY_KEY in the token position and the device name in a path
@@ -7,9 +7,9 @@
 //   POST /d/<device>/bot<RELAY_KEY>/<method>   forwarded to Telegram (whitelist)
 //
 // The flow is strictly one-way: devices push messages out, nothing comes back.
-// deleteWebhook is whitelisted (and NOT answered locally) so the one-time
-// migration can tear down a webhook left over from the old inbound design —
-// otherwise Telegram would keep pushing updates at a 404.
+// deleteWebhook is whitelisted (and NOT answered locally) so a one-time
+// teardown of any webhook left on the bot is possible — otherwise Telegram
+// would keep pushing updates at a 404.
 //
 // Bindings:
 //   DB         D1 database — the api_calls audit table (schema in migrations.sql)
@@ -87,11 +87,11 @@ async function telegram(env, method, params) {
   return { status: resp.status, body };
 }
 
-// SDKs post either a JSON body or urlencoded form data (python-telegram-bot uses
-// the latter, each parameter individually JSON-encoded). Form values that are
-// obviously structured (they start with { or [) are decoded back into objects —
-// bare strings stay strings, which Telegram's API coerces for number-typed
-// params the same way it does for every form-posting client.
+// Devices may post either a JSON body or urlencoded form data (urlencoded
+// clients often carry each parameter individually JSON-encoded). Form values
+// that are obviously structured (they start with { or [) are decoded back
+// into objects — bare strings stay strings, which Telegram's API coerces for
+// number-typed params the same way it does for every form-posting client.
 async function readParams(request) {
   const type = (request.headers.get("content-type") || "").split(";")[0].trim();
   if (type === "application/x-www-form-urlencoded") {

@@ -39,7 +39,7 @@
 
 - **`relay/`** —— 所有 Telegram 调用经过的 Cloudflare Worker（`worker.js`、`deploy.sh`、`migrations.sql`；部署见 `relay/README.md`）。 bot token 只存在 Worker 的 secrets 里。部署与 D1 变更一律 `relay/deploy.sh` / curl 直调 CF API，凭据在仓库根 `.env`；**不要用 MCP cloudflare-api**——脚本内容手抄易损坏、响应形状多变，坑多。
 
-### 中继契约 v4（纯出站代理）
+### 中继契约（纯出站代理）
 
 设备侧接口就是 Bot API：RELAY_KEY 占据 token 位，设备名放在路径前缀（Unicode 字母/数字/`_`/`-`，1–64 字符，中文可用，URL 百分号编码；中继先 decodeURIComponent 再校验）——任何 SDK 直连可用。
 
@@ -63,7 +63,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 键是路径而不是 pane：`session_file()` 会让多个 pane 解析到同一个文件（compaction 后父会话与后继并存），路径计键天然去重——同一路径一轮只 tail 一次，第一个到达的 pane 拥有该批消息的 footer。
 
-**serde 把踩坑史编码成类型保证**：`#[serde(tag = "type")] enum Row` 只认顶层 `"type": "assistant"`——`api-request-blob`（Claude Code 为校验 prompt cache 而哈希的整轮请求，把 thinking/text/tool_use 原样重放在 role "assistant" 下且无 timestamp/usage/uuid）落入 `#[serde(other)] Ignored`，重放防御不依赖运行时检查；`enum Block` 同理吃掉 tool_result（永不发送）。**注意 serde tag 匹配区分大小写**：变体必须 `rename` 成小写 `"assistant"`，且 `#[serde(tag="type")]` 属性本身别漏写——漏了就退化成外部标签表示，整行解析失败返回 None（测试全空，症状是「什么都没推」）。每条 thinking/text 独立成条（thinking 截断 RICH-500），tool_use → 名字+JSON 围栏（参数全文、缩进排版、preserve_order 保序，超长由发送端 `split_text` 分条，绝不静默截断）且相邻合并至 RICH-300。 `AskUserQuestion` / `ExitPlanMode` 没有 特例——它们作为普通 tool_use 流出去。
+**serde 把 transcript 过滤规则编码成类型保证**：`#[serde(tag = "type")] enum Row` 只认顶层 `"type": "assistant"`——`api-request-blob`（Claude Code 为校验 prompt cache 而哈希的整轮请求，把 thinking/text/tool_use 原样重放在 role "assistant" 下且无 timestamp/usage/uuid）落入 `#[serde(other)] Ignored`，重放防御不依赖运行时检查；`enum Block` 同理吃掉 tool_result（永不发送）。**注意 serde tag 匹配区分大小写**：变体必须 `rename` 成小写 `"assistant"`，且 `#[serde(tag="type")]` 属性本身别漏写——漏了就退化成外部标签表示，整行解析失败返回 None（测试全空，症状是「什么都没推」）。每条 thinking/text 独立成条（thinking 截断 RICH-500），tool_use → 名字+JSON 围栏（参数全文、缩进排版、preserve_order 保序，超长由发送端 `split_text` 分条，绝不静默截断）且相邻合并至 RICH-300。 `AskUserQuestion` / `ExitPlanMode` 没有 特例——它们作为普通 tool_use 流出去。
 
 每条消息 rich 先发（`{body}\n\n<footer>{footer 换行→<br/>}</footer>`），被拒降级 plain（`{body}\n\n{footer}`）——**这是唯一安全的重试**（Telegram 可能已受理 rich）。
 
@@ -73,7 +73,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 ### 发送（telegram.rs）
 
-`classify()` 的分支顺序是锁死的语义（测试逐条锁定）：传输错误与 5xx → 重试（退避 1+attempt 秒）；**429 独立分支且排在 ok:false 快败之前**——429 的响应体带 ok:false，先撞快败分支就永远到不了限流等待，一秒一轮硬打 Telegram（这是 Python 版实踩过的 bug）；4xx 快败；200 无 `result` 快败（Telegram 已受理，重试即重复发送）。429 睡满 `parameters.retry_after` +1 秒再试。每 attempt 整体 `timeout_global` 40s（覆盖 DNS——ureq 的全局超时含解析阶段，这是当初担心的 getaddrinfo 挂死点）。UA 设 `htb`（CF 1010 封 well-known 客户端签名）。`redact()` 把错误文本里的 relay key 抹成 `<relay-key>` 再落日志。HTTP 代理走 `ureq::Proxy` 的 CONNECT 隧道，DNS 解析在代理侧（等价 socks5h 语义）。
+`classify()` 的分支顺序是锁死的语义（测试逐条锁定）：传输错误与 5xx → 重试（退避 1+attempt 秒）；**429 独立分支且排在 ok:false 快败之前**——429 的响应体带 ok:false，先撞快败分支就永远到不了限流等待，一秒一轮硬打 Telegram、永远出不了限流窗；4xx 快败；200 无 `result` 快败（Telegram 已受理，重试即重复发送）。429 睡满 `parameters.retry_after` +1 秒再试。每 attempt 整体 `timeout_global` 40s（覆盖 DNS 解析——getaddrinfo 挂死这类阶段级超时盖不住的挂点也在它的兜底范围内）。UA 设 `htb`（CF 1010 封 well-known 客户端签名）。`redact()` 把错误文本里的 relay key 抹成 `<relay-key>` 再落日志。HTTP 代理走 `ureq::Proxy` 的 CONNECT 隧道，DNS 解析在代理侧（等价 socks5h 语义）。
 
 ### transcript 定位（resolve.rs）
 
@@ -120,7 +120,7 @@ cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
 
 ## 中继的 D1 调试面
 
-排查「发送失败」看中继的 D1（Cloudflare dashboard 的 D1 console，或 curl POST `/accounts/<id>/d1/database/<uuid>/query`，凭据在 `.env`）。 `api_calls` 表按 created_at 保留 30 天，记录全部出站 Bot API 调用：参数、成败、error_code/description、耗时——「发送失败」直接读 Telegram 的原话；duration_ms 异常高说明网络抖动。详细坑位（每日 500 万行读取是**账号级**、按库记账；读 0 行的查询探额度无效；额度烧完时的 export 接口 polling bookmark 要放 POST body）见旧文档与 `relay/README.md`；错误签名：D1 失败时 worker 只在日志里留 `audit write failed: …`，出站转发不受影响——**不要看到发送成功就以为 D1 也健康**。Workers Free 另有 10 万请求/天（超限报 `1027`）。
+排查「发送失败」看中继的 D1（Cloudflare dashboard 的 D1 console，或 curl POST `/accounts/<id>/d1/database/<uuid>/query`，凭据在 `.env`）。 `api_calls` 表按 created_at 保留 30 天，记录全部出站 Bot API 调用：参数、成败、error_code/description、耗时——「发送失败」直接读 Telegram 的原话；duration_ms 异常高说明网络抖动。D1 免费层的关键坑位：每日 500 万行读取是**账号级**（账号下所有库共用，UTC 0 点重置）、**按库记账、账号级判罚**；读 0 行的查询（`SELECT 1`、空表）在超额后照样成功，用它们探额度无效；额度烧完时能取数的路只有 `POST /d1/database/{uuid}/export`（polling 的 bookmark 要放 POST body 的 `current_bookmark` 里）；行读取按扫描计而非按返回计。错误签名：D1 失败时 worker 只在日志里留 `audit write failed: …`，出站转发不受影响——**不要看到发送成功就以为 D1 也健康**，排查审计断档要直接查表或看 `wrangler tail`。Workers Free 另有 10 万请求/天（超限报 `1027`）。
 
 ## Rust 惯例
 

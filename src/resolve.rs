@@ -69,7 +69,7 @@ pub struct AgentSession {
 
 /// Claude Code encodes a project path into its store directory name by
 /// replacing every non-alphanumeric *character* (code point, not byte) with
-/// '-', matching the JS/Python string replace the original naming used.
+/// '-'.
 fn encode_store_dir(cwd: &str) -> String {
     cwd.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })

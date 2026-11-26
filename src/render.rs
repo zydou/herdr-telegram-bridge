@@ -1,7 +1,7 @@
 //! Transcript rows → outbound messages.
 //!
-//! The session jsonl's row shapes are modeled with serde so the defenses of
-//! the Python era are structural: only a top-level `"type": "assistant"` row
+//! The session jsonl's row shapes are modeled with serde so the filtering
+//! rules are structural: only a top-level `"type": "assistant"` row
 //! deserializes to `Row::Assistant` — Claude Code's "api-request-blob"
 //! bookkeeping (which repeats a turn verbatim under role "assistant" with no
 //! timestamp) lands in `Row::Ignored` by construction, and a `tool_result`

@@ -8,7 +8,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 任何 SDK 都能直连：`base_url` 设为 `https://…workers.dev/d/<device>/bot`、token 填 RELAY_KEY 即可，插件侧没有任何手写 HTTP 层。
 
-**流量是严格单向的**：设备只往外推消息，没有任何入站。白名单只有 `getMe`（SDK initialize 时用一次）、`sendMessage`、`sendRichMessage`；`deleteWebhook` 也放行——它不是本地空应答，而是原样转发，专门为了从旧的双向架构迁移时能顺手撤掉 Telegram 侧还挂着的 webhook（否则 Telegram 会一直往一个 404 推 update）。其余方法一律 400。
+**流量是严格单向的**：设备只往外推消息，没有任何入站。白名单只有 `getMe`（SDK initialize 时用一次）、`sendMessage`、`sendRichMessage`；`deleteWebhook` 也放行——它不是本地空应答，而是原样转发，专为撤掉 Telegram 侧配置过的 webhook（bot 若设过 webhook 而无人接收入站，Telegram 会一直往一个 404 推 update）。其余方法一律 400。
 
 ## D1 审计
 
@@ -50,22 +50,6 @@ echo "<生成的 key>" | relay/deploy.sh secret RELAY_KEY
 ```
 
 只读排查可用 `npx wrangler tail herdr-relay` 抓实时日志。
-
-### 从 v3（双向中继）迁移
-
-v3 是 webhook 接收者：Telegram 把 update 推给它，入站按话题路由。 v4 撤掉了整条入站线，迁移三步：
-
-```sh
-# 1. 清掉 D1 里的入站表（migrations.sql 的 v4 段，幂等可重跑）
-python3 -c 'import json;print(json.dumps({"sql":open("migrations.sql").read()}))' \
-  | curl -sS -X POST ".../accounts/<id>/d1/database/<uuid>/query" \
-      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "content-type: application/json" -d @-
-# 2. 部署 v4 worker（CHAT_ID / WEBHOOK_SECRET 绑定随之消失，无需手动清）
-relay/deploy.sh
-# 3. 撤掉 Telegram 侧还挂着的 webhook（经中继的 deleteWebhook 转发，一次即可）
-curl -X POST "https://herdr-relay.<子域>.workers.dev/d/<device>/bot<RELAY_KEY>/deleteWebhook" \
-  -H "content-type: application/json" -d '{}'
-```
 
 ### 纯 dashboard 搭建（无终端时）
 
