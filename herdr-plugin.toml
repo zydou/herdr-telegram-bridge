@@ -1,0 +1,27 @@
+id = "htb"
+name = "Telegram"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Watch your herdr agents from Telegram: a read-only stream of what every claude pane is thinking, doing and saying."
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["htb", "ensure"]
+
+[[actions]]
+id = "test"
+title = "Send Telegram test message"
+contexts = ["pane", "workspace"]
+command = ["htb", "test"]
+
+[[actions]]
+id = "status"
+title = "Telegram feed: poller status"
+contexts = ["pane", "workspace"]
+command = ["htb", "status"]
+
+[[actions]]
+id = "restart"
+title = "Telegram feed: restart poller"
+contexts = ["pane", "workspace"]
+command = ["htb", "restart"]

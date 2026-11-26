@@ -1,0 +1,57 @@
+# htb 配置。复制到插件配置目录（不入库）：
+#   cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
+# 改完无需重启——守护进程每轮现读。
+
+# The id of your group chat (a negative number). All devices share ONE supergroup
+# with Topics enabled, and each device lands in its own topic (topic_id below).
+# To read the id: open any topic's link — t.me/c/<chat>/<id> — and prefix -100 to
+# the <chat> part.
+chat_id = -1001234567890
+
+# --- relay -------------------------------------------------------------------
+
+# Every Telegram call goes through your herdr-relay Cloudflare Worker (deploy it
+# once per bot token — see relay/README.md). The bot token itself lives only in
+# the Worker's secrets, never on this machine.
+relay_url = "REPLACE_ME.workers.dev"
+relay_key = "REPLACE_ME"
+
+# Required: this machine's name — the relay-side audit label and the feed's
+# prefix in every log line. Every machine sharing the bot needs a distinct one.
+# There is no hostname default: a name you chose reads better in the audit log.
+device = "4090"
+
+# Required: this machine's forum topic id — the trailing number of the topic's
+# link (t.me/c/<chat>/<id>). Create one topic per device in the group first;
+# every message lands in this topic. Without it the daemon naps until it is
+# configured.
+topic_id = 3
+
+# Optional: HTTP proxy for reaching the relay on workers.dev, e.g.
+# "http://127.0.0.1:7890" — https traffic rides a CONNECT tunnel (DNS resolves
+# proxy-side), and the target stays TLS-verified behind it.
+# proxy = ""
+
+# --- the stream ----------------------------------------------------------------
+
+# Which transcript details to push, from: "thinking", "text", "tool_use". Every
+# thinking and every text block becomes its own Telegram message (💭 / ⏳ headers);
+# consecutive tool calls share one (🔧). Tool results are never sent. Empty
+# array or omitted = nothing is streamed and the daemon naps.
+# agent_details = ["thinking", "text"]
+agent_details = ["thinking", "text", "tool_use"]
+
+# The footer closing every streamed message (content first, so a long body
+# doesn't push the context off-screen). May span several lines — a line whose
+# fields are all empty vanishes, and an empty field wrapped in 【】 loses the
+# brackets, so the default shows the title only when there is one.
+# Fields: emoji, folder (~-shortened cwd), pane, cwd, title (the task in herdr's
+# terminal title; empty early in a session — the pane id stands in then),
+# device. The last line shows token usage from that transcript entry's usage
+# block: input_tokens / cache_read_input_tokens / output_tokens, each prefixed
+# with an emoji that sits flush against its count (one space between the
+# usages). A token of 0 hides its own label (and the separator before it), and
+# counts >= 1000 render as K with one decimal that drops when it is 0
+# (1400 -> 1.4K, 43008 -> 43K). No usage data at all makes the whole line
+# vanish. An unknown field renders empty; dangling separators are cleaned up.
+# footer_format = "{emoji}【{title}】\n🖥{device} 📁{folder}\n⬆️{input_tokens} ⚡️{cache_read_input_tokens} ⬇️{output_tokens}"
