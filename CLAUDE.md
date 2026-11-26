@@ -4,7 +4,7 @@
 
 ## 架构
 
-一个把 agent pane（Claude Code）的会话过程流到 Telegram 的 herdr 插件——**单向只读**：transcript 是唯一数据源，Telegram 只是纯输出频道；没有任何 Telegram → herdr 的通路（回复、命令、审批按钮都不存在，bot 对手机而言是一个只发不收的账号）。 herdr 的角色只有两个：`herdr agent list` 发现 pane 与定位 transcript，`[[startup]]` 钩子拉起守护进程。 **状态事件机制（`pane.agent_status_changed`）整体不用**——完成就是流里最后一条 text，卡住就是流里最后一条 AskUserQuestion / ExitPlanMode 工具调用。
+一个把 agent pane（Claude Code）的会话过程流到 Telegram 的 herdr 插件——**单向只读**：transcript 是唯一数据源，Telegram 只是纯输出频道；没有任何 Telegram → herdr 的通路：bot 对手机而言是一个只发不收的账号。 herdr 的角色只有两个：`herdr agent list` 发现 pane 与定位 transcript，`[[startup]]` 钩子拉起守护进程。 本插件不消费 herdr 的状态事件（`pane.agent_status_changed`）——完成就是流里最后一条 text，卡住就是流里最后一条 AskUserQuestion / ExitPlanMode 工具调用。
 
 插件本体是一个 Rust 单文件二进制 `htb`（`cargo build --release` 后用户放 PATH，无 `[[build]]` 段），加一个中继 Worker：
 
@@ -12,7 +12,7 @@
   - `[[startup]]` 在 herdr 启动时跑一次 `ensure`（拉起守护进程）
   - `[[actions]]` 注册 `test` / `status` / `restart` 菜单动作
 
-- **`Cargo.toml`** —— 依赖四族：`ureq 3`（rustls、blocking、CONNECT 代理，`json` feature 必须显式开——默认只有 rustls+gzip）、`serde`/`serde_json`（`preserve_order` 对齐 json.dumps 键序，tool 参数按原序显示）、`toml`；dev 只有 tempfile。无 tokio、无 libc、无 signal-hook、无 clap。
+- **`Cargo.toml`** —— 依赖四族：`ureq 3`（rustls、blocking、CONNECT 代理，`json` feature 必须显式开——默认只有 rustls+gzip）、`serde`/`serde_json`（`preserve_order` 保对象键原序，tool 参数按原序显示）、`toml`；dev 只有 tempfile。无 tokio、无 libc、无 signal-hook、无 clap。
 
 - **`src/`** —— 模块导入方向无环：
 
@@ -47,7 +47,7 @@
 POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Telegram
 ```
 
-白名单：`getMe`、`sendMessage`、`sendRichMessage`、`deleteWebhook`，其余方法 400。转发把 Telegram 的 **HTTP 状态原样带回**（429 限流最要紧，丢了状态码设备侧会把 429 读成解析失败，一秒一轮硬打 Telegram、永远出不限流窗）。 D1 只剩 `api_calls` 审计表；**审计写失败只打日志、绝不 503**。 cron 每日清理 30 天前的审计行。详见 `relay/README.md` 与仓库根 `.env`（CF 凭据 + BOT_TOKEN，**绝不能输出内容**）。
+白名单：`getMe`、`sendMessage`、`sendRichMessage`、`deleteWebhook`，其余方法 400。转发把 Telegram 的 **HTTP 状态原样带回**（429 限流最要紧，丢了状态码设备侧会把 429 读成解析失败，一秒一轮硬打 Telegram、永远出不了限流窗）。 D1 只有 `api_calls` 审计表；**审计写失败只打日志、绝不 503**。 cron 每日清理 30 天前的审计行。详见 `relay/README.md` 与仓库根 `.env`（CF 凭据 + BOT_TOKEN，**绝不能输出内容**）。
 
 塑造了代码的关键约束：
 
@@ -67,9 +67,9 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 每条消息 rich 先发（`{body}\n\n<footer>{footer 换行→<br/>}</footer>`），被拒降级 plain（`{body}\n\n{footer}`）——**这是唯一安全的重试**（Telegram 可能已受理 rich）。
 
-### 轮询器（feed.rs）
+### 守护进程主循环（feed.rs）
 
-单线程采集循环，每 5s 一轮（`POLL_SECONDS`）——每轮现读配置 → listing 过期（≥5s）就刷一次 `herdr agent list`（刷新失败时对冻结列表继续扫，但 stale 超过 600s 每窗口报一次日志）→ 逐 pane resolve/tail/render → 按 pane 分桶 `thread::scope` 并发发送（**组内串行保序**=Telegram 到达顺序即阅读顺序，**组间并行**=一条慢 lane 不拖垮别的 pane——实测每条消息 RTT 373–628ms，串行发送在 6–8 活跃会话下超周期）。配置不可用（缺 chat_id/topic_id/relay/agent_details）时 nap 30s。没有探活请求：每个发送都现读配置独立成调用，中继宕机时只有真实待发消息才产生重试。
+单线程采集循环，每 5s 一轮（`POLL_SECONDS`）——每轮现读配置 → listing 过期（≥5s）就刷一次 `herdr agent list`（刷新失败时对冻结列表继续扫，但 stale 超过 600s 每窗口报一次日志）→ 逐 pane resolve/tail/render → 按 pane 分桶 `thread::scope` 并发发送（**组内串行保序**=Telegram 到达顺序即阅读顺序，**组间并行**=一条慢 lane 不拖垮别的 pane——每条消息 RTT 几百毫秒，串行发送在多个活跃会话下会超周期）。配置不可用（缺 chat_id/topic_id/relay/agent_details）时 nap 30s。没有探活请求：每个发送都现读配置独立成调用，中继宕机时只有真实待发消息才产生重试。
 
 ### 发送（telegram.rs）
 
@@ -105,7 +105,7 @@ herdr plugin logs --plugin htb             # herdr 侧命令执行日志（不�
 cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
 ```
 
-样例注释了全部键；开发最相关：`relay_url` / `relay_key` / `chat_id`（群组 id，必填）/ `topic_id`（本机消息落在哪个话题，必填，缺了守护进程 nap）、`agent_details`（推什么，空=不推）、`footer_format`（可含 token 用量占位符）、`device`（**必填**，每机唯一——不再隐式 hostname）、`proxy`（HTTP 代理 URL）。类型是原生 TOML；chat_id 写整数或字符串都行（`loose_string`）。配置每轮现读，改完无需重启。
+样例注释了全部键；开发最相关：`relay_url` / `relay_key` / `chat_id`（群组 id，必填）/ `topic_id`（本机消息落在哪个话题，必填，缺了守护进程 nap）、`agent_details`（推什么，空=不推）、`footer_format`（可含 token 用量占位符）、`device`（**必填**，每机唯一）、`proxy`（HTTP 代理 URL）。类型是原生 TOML；chat_id 写整数或字符串都行（`loose_string`）。配置每轮现读，改完无需重启。
 
 ## 状态文件
 
@@ -125,12 +125,11 @@ cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
 ## Rust 惯例
 
 - MSRV 1.89（`File::try_lock`）；edition 2024。
-- 外部 API（herdr CLI、Telegram）的错误以**返回值**呈现而非异常——`herdr::agent_list` 返回 `Result<Vec<Agent>, String>`，`telegram::call` 返回 `Result<Value, String>`。调用方检查并优雅降级，不向上传播。
+- 外部 API（herdr CLI、Telegram）的错误以**返回值**呈现——`herdr::agent_list` 返回 `Result<Vec<Agent>, String>`，`telegram::call` 返回 `Result<Value, String>`。调用方检查并优雅降级，不向上传播。
 - 测试注入用泛型闭包（`classify` 的 post/sleep），不引入 mock 框架。
-- 竞态相关的注释随逻辑搬迁；改游标推进顺序、label 切割、重试分支顺序的任何一行之前，先读懂对应注释里的为什么。
+- 竞态相关的注释紧贴逻辑；改游标推进顺序、label 切割、重试分支顺序的任何一行之前，先读懂对应注释里的为什么。
 
 ## 仓库红线
 
 - `.env` 含 CF 凭据与 BOT_TOKEN：绝不输出内容；查变量名只用 `grep -oE "^[0-9a-zA-Z_]+=" .env`。
 - relay key 不回显：curl 调试用 shell 变量拼接，不写进命令行字面量。
-- `history/`（本地工作日志）刻意 gitignore，不要入库。

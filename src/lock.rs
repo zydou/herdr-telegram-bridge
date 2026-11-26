@@ -5,8 +5,9 @@
 //! in long synchronous IO never runs one). Which is also why `stop` trusts
 //! nothing but the lock itself: sending SIGTERM proves nothing, only
 //! watching the lock actually release does. A daemon that fails to die within
-//! the timeout is reported as a refusal, never as a fake success — "thought
-//! it restarted but it didn't" was a real outage once.
+//! the timeout is reported as a refusal, never as a fake success — a caller
+//! that believes a restart happened when it did not is worse than one that
+//! knows it failed.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, Write};

@@ -4,8 +4,9 @@
 //! listing when it has gone stale, tail each claude pane's transcript, render
 //! the new lines, then hand the messages to one worker thread per pane —
 //! ordered within a pane (Telegram arrival order is the reading order),
-//! parallel across panes (one slow lane never holds up the others, which a
-//! single serial sender measurably did at 6–8 concurrent sessions).
+//! parallel across panes (each message's round trip is a few hundred
+//! milliseconds, so a single serial sender would overrun the sweep period
+//! with several active sessions).
 //!
 //! There is no signal handler and no shutdown path: SIGTERM kills the
 //! process, the kernel releases the flock, and the in-memory cursors die

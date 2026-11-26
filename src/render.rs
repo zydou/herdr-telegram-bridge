@@ -21,7 +21,8 @@ use std::collections::HashSet;
 
 /// One rich message fits 32768 UTF-8 chars; stay under and leave headroom.
 pub const RICH_CHARS: usize = 32000;
-/// The per-block detail cap; the longest real thinking runs to 142k chars.
+/// The per-block detail cap — generous enough for the longest thinking blocks
+/// Claude Code actually writes, while leaving room for the footer.
 pub const DETAIL_BLOCK_CHARS: usize = RICH_CHARS - 500;
 /// Bundles are joined under this; splitting happens with the same slack.
 const JOIN_CHARS: usize = RICH_CHARS - 300;
@@ -479,8 +480,8 @@ mod tests {
 
     #[test]
     fn prompt_tools_render_like_any_tool_use() {
-        // no approval cards exist — the question/plan tools stream out like
-        // every other tool, which is how a blocked pane shows itself
+        // the question/plan tools stream out like every other tool, which is
+        // how a blocked pane shows itself in the feed
         let chunk = assistant_row(
             serde_json::json!([{"type": "tool_use", "name": "AskUserQuestion", "input": {"question": "ship it?"}}]),
             "2026-08-22T10:00:00Z",

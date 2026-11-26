@@ -16,12 +16,12 @@ command = ["htb", "test"]
 
 [[actions]]
 id = "status"
-title = "Telegram feed: poller status"
+title = "Telegram feed: daemon status"
 contexts = ["pane", "workspace"]
 command = ["htb", "status"]
 
 [[actions]]
 id = "restart"
-title = "Telegram feed: restart poller"
+title = "Telegram feed: restart daemon"
 contexts = ["pane", "workspace"]
 command = ["htb", "restart"]

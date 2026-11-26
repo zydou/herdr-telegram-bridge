@@ -4,4 +4,3 @@ config.toml
 bot.lock
 log.jsonl
 log.jsonl.1
-history/

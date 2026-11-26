@@ -7,7 +7,8 @@
 //! extracted leniently (a TOML integer chat_id is as valid as a string one);
 //! anything the file fails to mention falls back to the default below — except
 //! `device`, which is required: it is the relay-side audit label for this
-//! machine, and an implicit hostname default proved too unstable to rely on.
+//! machine, and a name you chose reads better in the audit log than a
+//! hostname ever would.
 
 use std::fs;
 use std::path::{Path, PathBuf};

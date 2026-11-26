@@ -36,12 +36,11 @@ const json = (obj, status = 200) =>
 
 // D1 throws on any storage failure, above all when the daily row-read budget is
 // exhausted (code 7500). Unhandled, that throw escapes as a Worker error and the
-// edge answers `error code: 1101` in plain text — 1101 reads as "could not reach
-// the upstream host", which sent a whole debugging session chasing api.telegram.org
-// DNS while the real cause was the quota. That is why the audit write below is
-// wrapped: an audit failure must answer something honest, and it must not fail a
-// send Telegram already accepted (a 503 there would make the device retry and
-// post the message twice).
+// edge answers `error code: 1101` in plain text — which reads as "could not reach
+// the upstream host" and points the diagnosis at the wrong layer entirely. That
+// is why the audit write below is wrapped: an audit failure must answer something
+// honest, and it must not fail a send Telegram already accepted (a 503 there
+// would make the device retry and post the message twice).
 async function audit(env, device, method, params, body, started) {
   try {
     await env.DB.prepare(

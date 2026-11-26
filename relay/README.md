@@ -95,7 +95,7 @@ echo "<新 token>" | relay/deploy.sh secret BOT_TOKEN
 echo "<新 key>" | relay/deploy.sh secret RELAY_KEY
 ```
 
-然后把**每一台**设备的 `config.toml` 里 `relay_key` 改成新值——key 是全体设备共享的，漏改哪台哪台就连不上（日志里发送失败退避，改完即愈：配置现读，无需重启轮询器）。
+然后把**每一台**设备的 `config.toml` 里 `relay_key` 改成新值——key 是全体设备共享的，漏改哪台哪台就连不上（日志里发送失败退避，改完即愈：配置现读，无需重启守护进程）。
 
 **换群 / 换 bot**：中继无状态，两边都只是 Worker 侧换 secret、设备侧改 config（换群改各机的 `chat_id`/`topic_id`，新 bot 记得拉进群设为管理员）。
 

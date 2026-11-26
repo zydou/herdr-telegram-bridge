@@ -1,6 +1,6 @@
 # htb
 
-一个把 agent pane（Claude Code）的会话过程流到 Telegram 的 herdr 插件——**单向只读**：transcript 是唯一数据源，Telegram 只是纯输出频道。没有任何 Telegram → herdr 的通路（回复、命令、审批按钮都不存在），bot 对手机而言是一个只发不收的账号。
+一个把 agent pane（Claude Code）的会话过程流到 Telegram 的 herdr 插件——**单向只读**：transcript 是唯一数据源，Telegram 只是纯输出频道。没有任何 Telegram → herdr 的通路：bot 对手机而言是一个只发不收的账号。
 
 htb 是一个单文件 Rust 二进制：`cargo build --release` 后把 `target/release/htb` 放进 PATH（如 `~/bin`），herdr 的钩子经 PATH 拉起它。无 `[[build]]` 段——升级就是重新编译替换二进制。
 
