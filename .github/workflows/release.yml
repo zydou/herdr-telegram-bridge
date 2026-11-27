@@ -207,20 +207,31 @@ jobs:
           tar -cJf "htb-${{ matrix.target }}.tar.xz" htb
           mv "htb-${{ matrix.target }}.tar.xz" "$GITHUB_WORKSPACE/"
 
-      # A nightly is a moving target reusing one `nightly` release, and the release action
-      # only sets the body when it is explicitly provided — otherwise it retains whatever the
-      # release already had, so the notes would stay frozen at the first nightly. Compute a
-      # body that tracks the commit (and points the release at it) so each nightly push
-      # refreshes the notes. Kept to commit-level facts so all matrix jobs write the same body
-      # no matter which finishes last. Tag pushes leave it empty to keep the tag annotation.
-      - name: Compute nightly notes
-        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type != 'tag' }}
+      # The release notes are computed here because passing an explicitly empty
+      # `body` to the release action writes empty notes — it does not fall back
+      # to the tag annotation — which is how v1.0.0 initially shipped blank.
+      # So the body is always built: a tag push uses its own annotation (the
+      # annotated-tag message is the release notes; a lightweight tag has none
+      # and falls back to the commit message), everything else gets a
+      # commit-tracking nightly body. Kept to commit-level facts so all matrix
+      # jobs write the same body no matter which finishes last.
+      - name: Compute release notes
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
         run: |
           {
             echo "BODY<<EOF"
-            echo "[Automated build]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) of [$GITHUB_REPOSITORY@${GITHUB_SHA::7}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA):"
-            echo
-            git log -1 --format=%B
+            if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+              notes="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
+              if [[ -n "$notes" ]]; then
+                echo "$notes"
+              else
+                git log -1 --format=%B
+              fi
+            else
+              echo "[Automated build]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) of [$GITHUB_REPOSITORY@${GITHUB_SHA::7}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA):"
+              echo
+              git log -1 --format=%B
+            fi
             echo "EOF"
           } >> "$GITHUB_ENV"
 
@@ -235,8 +246,8 @@ jobs:
         with:
           tag_name: ${{ env.TAG }}
           files: htb-${{ matrix.target }}.tar.xz
-          # Empty on a tag push (keeps the tag annotation as the notes); set on a nightly so the
-          # notes track the commit instead of freezing at the first nightly's.
+          # Always set — see the compute step above: present-but-empty body
+          # means empty notes, no tag-annotation fallback.
           body: ${{ env.BODY }}
           # Point the release at this commit so a nightly's diff/notes reflect the latest push.
           target_commitish: ${{ github.sha }}
