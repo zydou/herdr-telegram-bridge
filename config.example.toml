@@ -27,9 +27,11 @@ device = "4090"
 # configured.
 topic_id = 3
 
-# Optional: HTTP proxy for reaching the relay on workers.dev, e.g.
-# "http://127.0.0.1:7890" — https traffic rides a CONNECT tunnel (DNS resolves
-# proxy-side), and the target stays TLS-verified behind it.
+# Optional: proxy for reaching the relay on workers.dev — an HTTP proxy
+# ("http://127.0.0.1:7890", traffic rides a CONNECT tunnel) or a SOCKS5 one
+# ("socks5://127.0.0.1:1080"). Either way the target hostname resolves on
+# the proxy side, so a hostname the local resolver cannot see still reaches
+# the relay, and the target stays TLS-verified behind it.
 # proxy = ""
 
 # --- the stream ----------------------------------------------------------------

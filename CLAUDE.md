@@ -12,7 +12,7 @@
   - `[[startup]]` 在 herdr 启动时跑一次 `ensure`（拉起守护进程）
   - `[[actions]]` 注册 `test` / `status` / `restart` 菜单动作
 
-- **`Cargo.toml`** —— 依赖四族：`ureq 3`（rustls、blocking、CONNECT 代理，`json` feature 必须显式开——默认只有 rustls+gzip）、`serde`/`serde_json`（`preserve_order` 保对象键原序，tool 参数按原序显示）、`toml`；dev 只有 tempfile。无 tokio、无 libc、无 signal-hook、无 clap。
+- **`Cargo.toml`** —— 依赖四族：`ureq 3`（rustls、blocking；`json` 与 `socks-proxy` 两个 feature 必须显式开——默认只有 rustls+gzip）、`serde`/`serde_json`（`preserve_order` 保对象键原序，tool 参数按原序显示）、`toml`；dev 只有 tempfile。无 tokio、无 libc、无 signal-hook、无 clap。
 
 - **`src/`** —— 模块导入方向无环：
 
@@ -73,7 +73,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 ### 发送（telegram.rs）
 
-`classify()` 的分支顺序是锁死的语义（测试逐条锁定）：传输错误与 5xx → 重试（退避 1+attempt 秒）；**429 独立分支且排在 ok:false 快败之前**——429 的响应体带 ok:false，先撞快败分支就永远到不了限流等待，一秒一轮硬打 Telegram、永远出不了限流窗；4xx 快败；200 无 `result` 快败（Telegram 已受理，重试即重复发送）。429 睡满 `parameters.retry_after` +1 秒再试。每 attempt 整体 `timeout_global` 40s（覆盖 DNS 解析——getaddrinfo 挂死这类阶段级超时盖不住的挂点也在它的兜底范围内）。UA 设 `htb`（CF 1010 封 well-known 客户端签名）。`redact()` 把错误文本里的 relay key 抹成 `<relay-key>` 再落日志。HTTP 代理走 `ureq::Proxy` 的 CONNECT 隧道，DNS 解析在代理侧（等价 socks5h 语义）。
+`classify()` 的分支顺序是锁死的语义（测试逐条锁定）：传输错误与 5xx → 重试（退避 1+attempt 秒）；**429 独立分支且排在 ok:false 快败之前**——429 的响应体带 ok:false，先撞快败分支就永远到不了限流等待，一秒一轮硬打 Telegram、永远出不了限流窗；4xx 快败；200 无 `result` 快败（Telegram 已受理，重试即重复发送）。429 睡满 `parameters.retry_after` +1 秒再试。每 attempt 整体 `timeout_global` 40s（覆盖 DNS 解析——getaddrinfo 挂死这类阶段级超时盖不住的挂点也在它的兜底范围内）。UA 设 `htb`（CF 1010 封 well-known 客户端签名）。`redact()` 把错误文本里的 relay key 抹成 `<relay-key>` 再落日志。代理支持 HTTP（CONNECT 隧道）与 SOCKS5（`socks-proxy` feature）——**`Proxy::new("socks5://")` 默认本地解析目标主机名，`post_once` 强制把所有协议重建为代理解析**（SOCKS4 除外——协议只携带地址，本地解析是它唯一能做的）；凭据从 URI 搬进 builder，别在重建时丢掉。
 
 ### transcript 定位（resolve.rs）
 
@@ -105,7 +105,7 @@ herdr plugin logs --plugin htb             # herdr 侧命令执行日志（不�
 cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
 ```
 
-样例注释了全部键；开发最相关：`relay_url` / `relay_key` / `chat_id`（群组 id，必填）/ `topic_id`（本机消息落在哪个话题，必填，缺了守护进程 nap）、`agent_details`（推什么，空=不推）、`footer_format`（可含 token 用量占位符）、`device`（**必填**，每机唯一）、`proxy`（HTTP 代理 URL）。类型是原生 TOML；chat_id 写整数或字符串都行（`loose_string`）。配置每轮现读，改完无需重启。
+样例注释了全部键；开发最相关：`relay_url` / `relay_key` / `chat_id`（群组 id，必填）/ `topic_id`（本机消息落在哪个话题，必填，缺了守护进程 nap）、`agent_details`（推什么，空=不推）、`footer_format`（可含 token 用量占位符）、`device`（**必填**，每机唯一）、`proxy`（HTTP 或 SOCKS5 代理 URL）。类型是原生 TOML；chat_id 写整数或字符串都行（`loose_string`）。配置每轮现读，改完无需重启。
 
 ## 状态文件
 
