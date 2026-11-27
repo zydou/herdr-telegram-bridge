@@ -1,6 +1,6 @@
 id = "htb"
 name = "Telegram"
-version = "0.1.0"
+version = "1.0.0"
 min_herdr_version = "0.7.0"
 description = "Watch your herdr agents from Telegram: a read-only stream of what every claude pane is thinking, doing and saying."
 platforms = ["macos", "linux"]

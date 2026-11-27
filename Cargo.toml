@@ -1,6 +1,6 @@
 [package]
 name = "htb"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 # 1.89 = std::fs::File::try_lock
 rust-version = "1.89"
