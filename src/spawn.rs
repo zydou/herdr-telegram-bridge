@@ -1,8 +1,14 @@
 //! `htb ensure` — start the daemon if it isn't already running.
 //!
-//! The daemon is spawned from this very executable and stays in herdr's
-//! process group: when herdr dies, so does the feed (by design — the feed has
-//! no state worth surviving for, and herdr's next start calls ensure again).
+//! The daemon is spawned from this very executable with null/file stdio, so
+//! nothing ties its lifetime to the process that started it: the hook exits
+//! immediately, the daemon reparents to init and keeps running. That is
+//! deliberate, and matters most during `herdr update --handoff`: herdr's
+//! server is replaced while its panes (and their transcripts) keep living —
+//! a daemon that died with the old server would lose its in-memory cursors
+//! and re-attach at EOF, silently dropping everything written during the
+//! swap. The startup hook is only a bootstrap: a fresh herdr runs `ensure`,
+//! finds the lock held, and the feed simply never hiccuped.
 //! Its stderr is appended to <state>/log.jsonl; the daemon logs JSONL to
 //! stderr and knows nothing about the file.
 
