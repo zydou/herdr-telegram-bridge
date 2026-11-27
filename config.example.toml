@@ -45,7 +45,7 @@ topic_id = 3
 # Which transcript details to push, from: "thinking", "text", "tool_use". Every
 # thinking and every text block becomes its own Telegram message (💭 / ⏳ headers);
 # consecutive tool calls share one (🔧). Tool results are never sent. Empty
-# array or omitted = nothing is streamed and the daemon naps.
+# array or omitted = nothing is streamed.
 # agent_details = ["thinking", "text"]
 agent_details = ["thinking", "text", "tool_use"]
 

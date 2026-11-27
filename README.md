@@ -52,7 +52,7 @@ cargo build --release
 
 ## 架构速览
 
-单线程采集循环（5s 一轮）：现读配置 → 刷新 herdr pane 列表（失败时继续用冻结列表扫）→ 逐 pane 定位 transcript、tail 增量行、渲染成消息 → 按 pane 分组 `thread::scope` 并行发送（组内串行保序，组间并行）。游标全在内存，重启从 EOF 起绝不回放。守护进程持 flock 单例，`stop` 以锁释放为唯一成功判据。零全局状态文件、零信号 handler——SIGTERM 直接杀死进程，内核释放锁。
+单线程采集循环（1s 一轮）：现读配置 → 刷新 herdr pane 列表（失败时静默继续用冻结列表扫，不写日志）→ 逐 pane 定位 transcript、tail 增量行、渲染成消息 → 按 pane 分组 `thread::scope` 并行发送（组内串行保序，组间并行）。游标全在内存、每轮零磁盘写，重启从 EOF 起绝不回放。守护进程持 flock 单例，`stop` 以锁释放为唯一成功判据。零全局状态文件、零信号 handler——SIGTERM 直接杀死进程，内核释放锁。
 
 模块（导入方向无环）：
 

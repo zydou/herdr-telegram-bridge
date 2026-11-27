@@ -69,7 +69,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 ### 守护进程主循环（feed.rs）
 
-单线程采集循环，每 5s 一轮（`POLL_SECONDS`）——每轮现读配置 → listing 过期（≥5s）就刷一次 `herdr agent list`（刷新失败时对冻结列表继续扫，但 stale 超过 600s 每窗口报一次日志）→ 逐 pane resolve/tail/render → 按 pane 分桶 `thread::scope` 并发发送（**组内串行保序**=Telegram 到达顺序即阅读顺序，**组间并行**=一条慢 lane 不拖垮别的 pane——每条消息 RTT 几百毫秒，串行发送在多个活跃会话下会超周期）。配置分两级：**load 失败（文件读不了、TOML 语法坏、chat_id/topic_id 形状不合）记日志后 daemon 直接退出**——输错配置是操作者错误，nap 空转的 daemon 在 `htb status` 里和正常工作的一模一样；缺 relay 或 `agent_details` 为空只是「没配好/没人订阅」，nap 30s。没有探活请求：每个发送都现读配置独立成调用，中继宕机时只有真实待发消息才产生重试。
+单线程采集循环，每 1s 一轮（`POLL_SECONDS`）——每轮现读配置 → listing 过期（≥1s）就刷一次 `herdr agent list`（**刷新失败静默**：继续用冻结列表扫，不写日志——1s 节奏下掉线每秒一行 JSONL 是纯磁盘损耗，掉线去 herdr 自身查，恢复自动）→ 逐 pane resolve/tail/render → 按 pane 分桶 `thread::scope` 并发发送（**组内串行保序**=Telegram 到达顺序即阅读顺序，**组间并行**=一条慢 lane 不拖垮别的 pane——每条消息 RTT 几百毫秒，串行发送在多个活跃会话下会超周期；sleep `saturating_sub` 归零即下轮立即开跑，1s 是节奏下限不是死线）。1s 节奏**零磁盘写**：游标全在内存、无状态文件，唯一持续写是发送日志（内容驱动）；resolve 重评分每轮 ~81MB 页缓存读（AINews 一个 store 39 个 jsonl 占大头），随 store 文件数线性增长——store 膨胀到上百文件时该按 session ref 做缓存。相邻 tool_use 合并窗口=1 个周期，1s 下工具密集回合的独立消息数比 5s 时多。配置分两级：**load 失败（文件读不了、TOML 语法坏、chat_id/topic_id 形状不合）记日志后 daemon 直接退出**——输错配置是操作者错误，空转的 daemon 在 `htb status` 里和正常工作的一模一样；缺 relay 或 `agent_details` 为空只是「没配好/没人订阅」，按普通节奏空转。没有探活请求：每个发送都现读配置独立成调用，中继宕机时只有真实待发消息才产生重试。
 
 ### 发送（telegram.rs）
 

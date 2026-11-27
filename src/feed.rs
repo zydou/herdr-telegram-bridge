@@ -8,12 +8,20 @@
 //! milliseconds, so a single serial sender would overrun the sweep period
 //! with several active sessions).
 //!
+//! The cadence costs no disk: cursors live in memory, there is no state
+//! file, and the only recurring writes are the per-message send logs — the
+//! config re-read and the resolve/tail passes are page-cache reads. Listing
+//! failures log nothing for the same reason: at a 1s cadence an outage would
+//! mean one JSONL line per second of pure disk wear, and the outage is
+//! herdr's own state to diagnose; the daemon just keeps sweeping the frozen
+//! listing until herdr answers again.
+//!
 //! There is no signal handler: SIGTERM kills the process, the kernel releases
 //! the flock, and the in-memory cursors die with it — a restart re-attaches at
 //! EOF by design. Waiting one sweep for that handover is the accepted cost.
 //! The one voluntary exit is a config that fails to load: a typo'd id is an
 //! operator error to surface loudly (log + exit), not a state to sit in —
-//! from `htb status` a napping daemon is indistinguishable from a working one.
+//! from `htb status` an idle daemon is indistinguishable from a working one.
 
 use crate::config::{self, Config};
 use crate::herdr;
@@ -28,19 +36,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-const POLL_SECONDS: Duration = Duration::from_secs(5);
-/// Nap while there is nothing configured to do: no relay, or an empty
-/// `agent_details`, means the detail stream has no subscribers. Config
-/// *errors* (unreadable file, bad id shapes) do not nap — they exit.
-const NAP_UNUSABLE: Duration = Duration::from_secs(30);
-/// A listing older than this, still frozen, is logged once per window.
-const STALE_LOG_SECONDS: f64 = 600.0;
+const POLL_SECONDS: Duration = Duration::from_secs(1);
 
 struct Feed {
     tails: Tails,
     listing: Vec<resolve::Agent>,
     listing_at: Option<Instant>,
-    stale_logged_at: Option<Instant>,
     home: PathBuf,
 }
 
@@ -62,7 +63,6 @@ pub fn run_daemon(state: &Path) -> ExitCode {
         tails: Tails::default(),
         listing: Vec::new(),
         listing_at: None,
-        stale_logged_at: None,
         home: std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default(),
@@ -80,7 +80,7 @@ pub fn run_daemon(state: &Path) -> ExitCode {
 
 impl Feed {
     /// One cycle; Some(how long to sleep). None is fatal: the config itself
-    /// failed to load, and the daemon exits rather than napping on it.
+    /// failed to load, and the daemon exits rather than idling on it.
     fn cycle(&mut self) -> Option<Duration> {
         let cfg = match Config::load(&config::config_dir()) {
             Ok(c) => c,
@@ -90,7 +90,7 @@ impl Feed {
             }
         };
         if !cfg.usable() {
-            return Some(NAP_UNUSABLE);
+            return Some(POLL_SECONDS);
         }
 
         self.refresh_listing();
@@ -146,40 +146,20 @@ impl Feed {
 
     /// Refresh the pane listing when it has gone stale (≥ one poll cycle).
     /// A failed refresh keeps the frozen listing sweeping — herdr being down
-    /// must not silence panes it already reported — but a listing frozen
-    /// past STALE_LOG_SECONDS gets one log line per window, so panes created
-    /// during the outage aren't silently missing.
+    /// must not silence panes it already reported — and that is all: the
+    /// failure is not logged. At a 1s cadence one JSONL line per second of
+    /// outage is pure disk wear for no information (herdr's own state is
+    /// where an outage is diagnosed), and recovery is automatic — the next
+    /// successful refresh replaces the listing and life goes on. Panes
+    /// created during a long outage are simply invisible until then.
     fn refresh_listing(&mut self) {
         let fresh = self.listing_at.is_some_and(|t| t.elapsed() < POLL_SECONDS);
         if fresh {
             return;
         }
-        match herdr::agent_list() {
-            Ok(listing) => {
-                self.listing = listing;
-                self.listing_at = Some(Instant::now());
-                self.stale_logged_at = None;
-            }
-            Err(e) => {
-                if self.listing.is_empty() {
-                    logging::log("listing refresh failed", &[("error", &e)]);
-                } else {
-                    let frozen_for = self
-                        .listing_at
-                        .map(|t| t.elapsed().as_secs_f64())
-                        .unwrap_or(0.0);
-                    let unlogged = self
-                        .stale_logged_at
-                        .is_none_or(|t| t.elapsed().as_secs_f64() >= STALE_LOG_SECONDS);
-                    if frozen_for >= STALE_LOG_SECONDS && unlogged {
-                        logging::log(
-                            "listing stale, sweeping frozen panes",
-                            &[("frozen_s", &format!("{frozen_for:.0}")), ("error", &e)],
-                        );
-                        self.stale_logged_at = Some(Instant::now());
-                    }
-                }
-            }
+        if let Ok(listing) = herdr::agent_list() {
+            self.listing = listing;
+            self.listing_at = Some(Instant::now());
         }
     }
 }
