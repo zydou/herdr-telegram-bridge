@@ -42,7 +42,7 @@ jobs:
     # Every target job depends on this so a broken build never wastes a cross-compile.
     name: fmt & clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
 
@@ -78,7 +78,7 @@ jobs:
     name: ${{ matrix.target }}
     needs: [lint]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 4
     strategy:
       fail-fast: false
       matrix:
