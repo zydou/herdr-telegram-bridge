@@ -73,7 +73,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 ### 发送（telegram.rs）
 
-`classify()` 的分支顺序是锁死的语义（测试逐条锁定）：传输错误与 5xx → 重试（退避 1+attempt 秒）；**429 独立分支且排在 ok:false 快败之前**——429 的响应体带 ok:false，先撞快败分支就永远到不了限流等待，一秒一轮硬打 Telegram、永远出不了限流窗；4xx 快败；200 无 `result` 快败（Telegram 已受理，重试即重复发送）。429 睡满 `parameters.retry_after` +1 秒再试。每 attempt 整体 `timeout_global` 40s（覆盖 DNS 解析——getaddrinfo 挂死这类阶段级超时盖不住的挂点也在它的兜底范围内）。UA 设 `htb`（CF 1010 封 well-known 客户端签名）。`redact()` 把错误文本里的 relay key 抹成 `<relay-key>` 再落日志。代理支持 HTTP（CONNECT 隧道）与 SOCKS5（`socks-proxy` feature）——**`Proxy::new("socks5://")` 默认本地解析目标主机名，`post_once` 强制把所有协议重建为代理解析**（SOCKS4 除外——协议只携带地址，本地解析是它唯一能做的）；凭据从 URI 搬进 builder，别在重建时丢掉。
+`classify()` 的分支顺序是锁死的语义（测试逐条锁定）：传输错误与 5xx → 重试（退避 1+attempt 秒）；**429 独立分支且排在 ok:false 快败之前**——429 的响应体带 ok:false，先撞快败分支就永远到不了限流等待，一秒一轮硬打 Telegram、永远出不了限流窗；4xx 快败；200 无 `result` 快败（Telegram 已受理，重试即重复发送）。429 睡满 `parameters.retry_after` +1 秒再试。每 attempt 整体 `timeout_global` 40s（覆盖 DNS 解析——getaddrinfo 挂死这类阶段级超时盖不住的挂点也在它的兜底范围内）。UA 设 `htb`（CF 1010 封 well-known 客户端签名）。`redact()` 把错误文本里的 relay key 抹成 `<relay-key>` 再落日志。代理支持 HTTP（CONNECT 隧道）与 SOCKS5（`socks-proxy` feature），解析位置遵循 scheme 语义（对齐 curl，不做任何额外转换）：`socks5://` 本地解析目标主机名、`socks5h://` 交给代理解析——本地解析这条路在本机网络下往往正是要绕开的那条，选 `socks5h://`。
 
 ### transcript 定位（resolve.rs）
 

@@ -3,10 +3,11 @@
 //! The relay speaks the standard Bot API — RELAY_KEY in the token position,
 //! the device name in a path prefix — so the client is nothing but "POST
 //! JSON, read the answer". Proxies ride ureq too: HTTP as a CONNECT tunnel,
-//! SOCKS5 through the `socks-proxy` feature — and DNS happens proxy-side
-//! either way, so a hostname the local resolver cannot see still reaches
-//! the relay. `timeout_global` bounds the whole exchange including
-//! resolution, so a wedged resolver cannot hang a send lane forever.
+//! SOCKS5 through the `socks-proxy` feature, with curl's scheme semantics
+//! kept intact — socks5:// resolves the target hostname locally, socks5h://
+//! hands it to the proxy. `timeout_global` bounds the whole exchange
+//! including resolution, so a wedged resolver cannot hang a send lane
+//! forever.
 //!
 //! Error classes, in order:
 //! - transport trouble and 5xx — retried with a growing pause
@@ -67,27 +68,6 @@ fn post_once(url: &str, params: &Value, proxy: &str) -> Result<(u16, String), St
         .http_status_as_error(false);
     if !proxy.is_empty() {
         let p = ureq::Proxy::new(proxy).map_err(|e| format!("bad proxy: {e}"))?;
-        // ureq parses socks5:// as resolve_target=true — resolve the target
-        // locally before handing it to the proxy. The relay's hostname must
-        // resolve on the proxy side (that is what the proxy is for here), so
-        // every protocol gets that forced on. SOCKS4 is the exception: the
-        // protocol only carries addresses, so its local-resolution default
-        // is kept as the only thing it can do.
-        let p = if p.protocol() == ureq::ProxyProtocol::Socks4 {
-            p
-        } else {
-            let mut b = ureq::Proxy::builder(p.protocol())
-                .host(p.host())
-                .port(p.port())
-                .resolve_target(false);
-            if let Some(user) = p.username() {
-                b = b.username(user);
-            }
-            if let Some(pass) = p.password() {
-                b = b.password(pass);
-            }
-            b.build().map_err(|e| format!("bad proxy: {e}"))?
-        };
         builder = builder.proxy(Some(p));
     }
     let agent: ureq::Agent = builder.build().into();

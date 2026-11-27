@@ -28,11 +28,11 @@ device = "4090"
 topic_id = 3
 
 # Optional: proxy for reaching the relay on workers.dev — an HTTP proxy
-# ("http://127.0.0.1:7890", traffic rides a CONNECT tunnel) or a SOCKS5 one
-# ("socks5://127.0.0.1:1080"; "socks5h://" means the same here). Whichever
-# protocol you name, the target hostname resolves on the proxy side, so a
-# hostname the local resolver cannot see still reaches the relay, and the
-# target stays TLS-verified behind it.
+# ("http://127.0.0.1:7890", traffic rides a CONNECT tunnel) or a SOCKS5 one.
+# The socks5 schemes follow curl: "socks5://127.0.0.1:1080" resolves the
+# target hostname locally, "socks5h://127.0.0.1:1080" lets the proxy resolve
+# it — pick socks5h when the local resolver cannot see (or cannot be trusted
+# with) the relay's hostname. Either way the target stays TLS-verified.
 # proxy = ""
 
 # --- the stream ----------------------------------------------------------------
