@@ -40,6 +40,7 @@ const POLL_SECONDS: Duration = Duration::from_secs(1);
 
 struct Feed {
     tails: Tails,
+    resolver: resolve::Resolver,
     listing: Vec<resolve::Agent>,
     listing_at: Option<Instant>,
     home: PathBuf,
@@ -61,6 +62,7 @@ pub fn run_daemon(state: &Path) -> ExitCode {
 
     let mut feed = Feed {
         tails: Tails::default(),
+        resolver: resolve::Resolver::default(),
         listing: Vec::new(),
         listing_at: None,
         home: std::env::var_os("HOME")
@@ -103,9 +105,12 @@ impl Feed {
             if agent.agent != "claude" {
                 continue; // claude-only: no other agent's transcripts are read
             }
-            let Some(tf) =
-                resolve::session_file(&self.home, agent.session.as_ref(), agent.cwd_path(), now)
-            else {
+            let Some(tf) = self.resolver.session_file(
+                &self.home,
+                agent.session.as_ref(),
+                agent.cwd_path(),
+                now,
+            ) else {
                 continue;
             };
             // two panes can resolve to one file (compaction keeps parent and

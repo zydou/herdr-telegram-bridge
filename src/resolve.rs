@@ -7,9 +7,17 @@
 //! When herdr has no ref at all (its SessionStart hook reports once, so a pane
 //! re-created under a live process never receives one) transcripts are still
 //! findable by cwd, which Claude Code encodes into its store directory name.
+//!
+//! Scoring results are cached on the file's mtime: a transcript's last-speech
+//! timestamp cannot change unless the file changed, so re-scoring a pool of
+//! dozens of session files every sweep would be pure waste — at a 1s cadence
+//! an 80MB pool re-read per second is real CPU. Only files whose mtime moved
+//! since the last scoring get re-read, which in steady state is exactly the
+//! transcripts being actively written.
 
 use crate::render::{parse_row, spoken_at};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -104,7 +112,7 @@ fn jsonl_in(dir: &Path) -> Vec<PathBuf> {
 /// timestamp, which would make a frozen reply look brand new. None when the
 /// tail holds no timestamped assistant text — the candidate sits out the
 /// scoring.
-fn last_reply_at(path: &Path) -> Option<f64> {
+fn scan_last_reply_at(path: &Path) -> Option<f64> {
     let mut f = fs::File::open(path).ok()?;
     let size = f.metadata().ok()?.len();
     f.seek(SeekFrom::Start(size.saturating_sub(TAIL_BYTES)))
@@ -122,67 +130,95 @@ fn last_reply_at(path: &Path) -> Option<f64> {
     None
 }
 
-/// The freshest candidate when any of them spoke recently enough; else the
-/// id-matched file. Two concurrent sessions in one store can still be
-/// confused, but a frozen one is worse.
-fn pick_freshest(pool: Vec<PathBuf>, matched: &Path, now: f64) -> PathBuf {
-    let mut best = matched.to_path_buf();
-    let mut best_at = 0.0;
-    for p in pool {
-        if let Some(t) = last_reply_at(&p)
-            && t > best_at
-        {
-            best_at = t;
-            best = p;
-        }
-    }
-    if best_at > now - FRESH_SECONDS {
-        best
-    } else {
-        matched.to_path_buf()
-    }
+/// Transcript resolution with an mtime-gated score cache (see the module
+/// doc): one entry per candidate file ever scanned, holding the mtime the
+/// score was computed at. Entries never expire — the cache is bounded by the
+/// number of session files in the active stores, a few hundred at most.
+#[derive(Default)]
+pub struct Resolver {
+    scores: HashMap<PathBuf, (u64, Option<f64>)>,
 }
 
-/// Resolve the transcript path for one pane.
-///
-/// The id glob wins when it hits; the cwd-encoded store backs it up when the
-/// ref is missing or dead. Scoring is scoped to the matched file's project
-/// directory — the successor session lives in the same store.
-pub fn session_file(
-    home: &Path,
-    session: Option<&AgentSession>,
-    cwd: Option<&str>,
-    now: f64,
-) -> Option<PathBuf> {
-    let projects = home.join(".claude").join("projects");
+impl Resolver {
+    /// Resolve the transcript path for one pane.
+    ///
+    /// The id glob wins when it hits; the cwd-encoded store backs it up when the
+    /// ref is missing or dead. Scoring is scoped to the matched file's project
+    /// directory — the successor session lives in the same store.
+    pub fn session_file(
+        &mut self,
+        home: &Path,
+        session: Option<&AgentSession>,
+        cwd: Option<&str>,
+        now: f64,
+    ) -> Option<PathBuf> {
+        let projects = home.join(".claude").join("projects");
 
-    let mut hits: Vec<PathBuf> = Vec::new();
-    if let Some(s) = session
-        && s.kind.as_deref() == Some("id")
-        && let Some(v) = s.value.as_deref().filter(|v| !v.is_empty())
-    {
-        // glob: any project directory directly under projects/ may
-        // hold <id>.jsonl
-        hits = fs::read_dir(&projects)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path().join(format!("{v}.jsonl")))
-            .filter(|p| p.is_file())
-            .collect();
+        let mut hits: Vec<PathBuf> = Vec::new();
+        if let Some(s) = session
+            && s.kind.as_deref() == Some("id")
+            && let Some(v) = s.value.as_deref().filter(|v| !v.is_empty())
+        {
+            // glob: any project directory directly under projects/ may
+            // hold <id>.jsonl
+            hits = fs::read_dir(&projects)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path().join(format!("{v}.jsonl")))
+                .filter(|p| p.is_file())
+                .collect();
+        }
+        if hits.is_empty()
+            && let Some(cwd) = cwd.filter(|c| !c.is_empty())
+        {
+            hits = jsonl_in(&projects.join(encode_store_dir(cwd)));
+        }
+        if hits.is_empty() {
+            return None;
+        }
+        let matched = hits.into_iter().max_by_key(|p| mtime(p))?;
+        // the successor session lives in the same store as the matched file
+        let pool = jsonl_in(matched.parent()?);
+        Some(self.pick_freshest(pool, &matched, now))
     }
-    if hits.is_empty()
-        && let Some(cwd) = cwd.filter(|c| !c.is_empty())
-    {
-        hits = jsonl_in(&projects.join(encode_store_dir(cwd)));
+
+    /// The freshest candidate when any of them spoke recently enough; else the
+    /// id-matched file. Two concurrent sessions in one store can still be
+    /// confused, but a frozen one is worse.
+    fn pick_freshest(&mut self, pool: Vec<PathBuf>, matched: &Path, now: f64) -> PathBuf {
+        let mut best = matched.to_path_buf();
+        let mut best_at = 0.0;
+        for p in pool {
+            if let Some(t) = self.last_reply_at(&p)
+                && t > best_at
+            {
+                best_at = t;
+                best = p;
+            }
+        }
+        if best_at > now - FRESH_SECONDS {
+            best
+        } else {
+            matched.to_path_buf()
+        }
     }
-    if hits.is_empty() {
-        return None;
+
+    /// `scan_last_reply_at` behind the mtime cache: an unchanged file cannot
+    /// have new speech, so its cached score is returned without touching the
+    /// tail. The mtime is read fresh every call — the stat is the whole cost
+    /// of a pool full of idle transcripts.
+    fn last_reply_at(&mut self, path: &Path) -> Option<f64> {
+        let m = mtime(path);
+        if let Some((cached_m, at)) = self.scores.get(path)
+            && *cached_m == m
+        {
+            return *at;
+        }
+        let at = scan_last_reply_at(path);
+        self.scores.insert(path.to_path_buf(), (m, at));
+        at
     }
-    let matched = hits.into_iter().max_by_key(|p| mtime(p))?;
-    // the successor session lives in the same store as the matched file
-    let pool = jsonl_in(matched.parent()?);
-    Some(pick_freshest(pool, &matched, now))
 }
 
 #[cfg(test)]
@@ -228,16 +264,17 @@ mod tests {
             "deadbeef.jsonl",
             &[assistant_text("2020-01-01T00:00:00Z", "old")],
         );
-        let got = session_file(
-            tmp.path(),
-            Some(&AgentSession {
-                kind: Some("id".into()),
-                value: Some("deadbeef".into()),
-            }),
-            None,
-            now(),
-        )
-        .unwrap();
+        let got = Resolver::default()
+            .session_file(
+                tmp.path(),
+                Some(&AgentSession {
+                    kind: Some("id".into()),
+                    value: Some("deadbeef".into()),
+                }),
+                None,
+                now(),
+            )
+            .unwrap();
         assert_eq!(got, m);
     }
 
@@ -253,16 +290,17 @@ mod tests {
         );
         let ts = crate::logging::now_rfc3339_millis();
         let _new = write_jsonl(&proj, "bbbb.jsonl", &[assistant_text(&ts, "alive")]);
-        let got = session_file(
-            tmp.path(),
-            Some(&AgentSession {
-                kind: Some("id".into()),
-                value: Some("aaaa".into()),
-            }),
-            None,
-            now(),
-        )
-        .unwrap();
+        let got = Resolver::default()
+            .session_file(
+                tmp.path(),
+                Some(&AgentSession {
+                    kind: Some("id".into()),
+                    value: Some("aaaa".into()),
+                }),
+                None,
+                now(),
+            )
+            .unwrap();
         assert!(got.ends_with("bbbb.jsonl"), "{got:?}");
     }
 
@@ -275,15 +313,25 @@ mod tests {
             "only.jsonl",
             &[assistant_text("2020-01-01T00:00:00Z", "hi")],
         );
-        let got = session_file(tmp.path(), None, Some("/home/u/My Proj"), now()).unwrap();
+        let got = Resolver::default()
+            .session_file(tmp.path(), None, Some("/home/u/My Proj"), now())
+            .unwrap();
         assert_eq!(got, p);
     }
 
     #[test]
     fn no_ref_no_store_is_none() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(session_file(tmp.path(), None, None, now()).is_none());
-        assert!(session_file(tmp.path(), None, Some("/nowhere"), now()).is_none());
+        assert!(
+            Resolver::default()
+                .session_file(tmp.path(), None, None, now())
+                .is_none()
+        );
+        assert!(
+            Resolver::default()
+                .session_file(tmp.path(), None, Some("/nowhere"), now())
+                .is_none()
+        );
     }
 
     #[test]
@@ -302,7 +350,9 @@ mod tests {
             "b.jsonl",
             &[assistant_text("2020-01-02T00:00:00Z", "b")],
         );
-        let got = session_file(tmp.path(), None, Some("/home/u/proj"), now()).unwrap();
+        let got = Resolver::default()
+            .session_file(tmp.path(), None, Some("/home/u/proj"), now())
+            .unwrap();
         assert_eq!(got, b);
         assert_ne!(got, a);
     }
@@ -324,7 +374,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         // blob file has the newest mtime — freshness scoring must ignore it
         fs::write(&blobfile, blob + "\n").unwrap();
-        let got = session_file(tmp.path(), None, Some("/home/u/proj"), now()).unwrap();
+        let got = Resolver::default()
+            .session_file(tmp.path(), None, Some("/home/u/proj"), now())
+            .unwrap();
         assert_eq!(got, alive);
     }
 
@@ -338,16 +390,58 @@ mod tests {
             "id.jsonl",
             &["{broken".into(), assistant_text(&ts, "ok")],
         );
-        let got = session_file(
-            tmp.path(),
-            Some(&AgentSession {
-                kind: Some("id".into()),
-                value: Some("id".into()),
-            }),
-            None,
-            now(),
-        )
-        .unwrap();
+        let got = Resolver::default()
+            .session_file(
+                tmp.path(),
+                Some(&AgentSession {
+                    kind: Some("id".into()),
+                    value: Some("id".into()),
+                }),
+                None,
+                now(),
+            )
+            .unwrap();
         assert_eq!(got, m);
+    }
+
+    #[test]
+    fn score_cache_follows_new_speech_through_unchanged_files() {
+        // the second sweep runs with the cache warm: b.jsonl is unchanged and
+        // must serve its cached score, while a.jsonl has new speech — the
+        // mtime change must invalidate its cached entry and flip the winner.
+        // A cache that never invalidated would keep returning b.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join(".claude/projects/-home-u-proj");
+        let _a = write_jsonl(
+            &store,
+            "a.jsonl",
+            &[assistant_text("2020-01-01T00:00:00Z", "old a")],
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let _b = write_jsonl(
+            &store,
+            "b.jsonl",
+            &[assistant_text("2020-01-01T00:00:00Z", "old b")],
+        );
+        let mut r = Resolver::default();
+        let first = r
+            .session_file(tmp.path(), None, Some("/home/u/proj"), now())
+            .unwrap();
+        assert!(first.ends_with("b.jsonl"), "newest mtime wins: {first:?}");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let ts = crate::logging::now_rfc3339_millis();
+        write_jsonl(
+            &store,
+            "a.jsonl",
+            &[
+                assistant_text("2020-01-01T00:00:00Z", "old a"),
+                assistant_text(&ts, "a speaks now"),
+            ],
+        );
+        let second = r
+            .session_file(tmp.path(), None, Some("/home/u/proj"), now())
+            .unwrap();
+        assert!(second.ends_with("a.jsonl"), "fresh speech wins: {second:?}");
     }
 }
