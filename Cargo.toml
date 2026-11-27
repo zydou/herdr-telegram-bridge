@@ -21,5 +21,8 @@ toml = "1.2"
 tempfile = "3"
 
 [profile.release]
-strip = true
+codegen-units = 1
 lto = true
+opt-level = "z"
+panic = "abort"
+strip = true
