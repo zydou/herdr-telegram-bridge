@@ -8,10 +8,12 @@
 //! milliseconds, so a single serial sender would overrun the sweep period
 //! with several active sessions).
 //!
-//! There is no signal handler and no shutdown path: SIGTERM kills the
-//! process, the kernel releases the flock, and the in-memory cursors die
-//! with it — a restart re-attaches at EOF by design. Waiting one sweep for
-//! that handover is the accepted cost.
+//! There is no signal handler: SIGTERM kills the process, the kernel releases
+//! the flock, and the in-memory cursors die with it — a restart re-attaches at
+//! EOF by design. Waiting one sweep for that handover is the accepted cost.
+//! The one voluntary exit is a config that fails to load: a typo'd id is an
+//! operator error to surface loudly (log + exit), not a state to sit in —
+//! from `htb status` a napping daemon is indistinguishable from a working one.
 
 use crate::config::{self, Config};
 use crate::herdr;
@@ -27,8 +29,9 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 const POLL_SECONDS: Duration = Duration::from_secs(5);
-/// Nap while there is nothing configured to do: no topic, no relay, or an
-/// empty `agent_details` means the detail stream has no subscribers.
+/// Nap while there is nothing configured to do: no relay, or an empty
+/// `agent_details`, means the detail stream has no subscribers. Config
+/// *errors* (unreadable file, bad id shapes) do not nap — they exit.
 const NAP_UNUSABLE: Duration = Duration::from_secs(30);
 /// A listing older than this, still frozen, is logged once per window.
 const STALE_LOG_SECONDS: f64 = 600.0;
@@ -66,25 +69,28 @@ pub fn run_daemon(state: &Path) -> ExitCode {
     };
     loop {
         let started = Instant::now();
-        let nap = feed.cycle();
+        let Some(nap) = feed.cycle() else {
+            logging::log("daemon exiting — fix config.toml, then `htb ensure`", &[]);
+            return ExitCode::FAILURE;
+        };
         let left = nap.saturating_sub(started.elapsed());
         std::thread::sleep(left);
     }
 }
 
 impl Feed {
-    /// One cycle; returns how long to sleep afterwards.
-    fn cycle(&mut self) -> Duration {
+    /// One cycle; Some(how long to sleep). None is fatal: the config itself
+    /// failed to load, and the daemon exits rather than napping on it.
+    fn cycle(&mut self) -> Option<Duration> {
         let cfg = match Config::load(&config::config_dir()) {
             Ok(c) => c,
             Err(e) => {
-                // a broken config must not spin the loop hot
                 logging::log("config error", &[("error", &e)]);
-                return NAP_UNUSABLE;
+                return None;
             }
         };
         if !cfg.usable() {
-            return NAP_UNUSABLE;
+            return Some(NAP_UNUSABLE);
         }
 
         self.refresh_listing();
@@ -135,7 +141,7 @@ impl Feed {
                 }
             });
         }
-        POLL_SECONDS
+        Some(POLL_SECONDS)
     }
 
     /// Refresh the pane listing when it has gone stale (≥ one poll cycle).

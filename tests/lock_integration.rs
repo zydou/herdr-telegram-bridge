@@ -13,11 +13,21 @@ struct TestEnv {
 
 impl TestEnv {
     fn new() -> TestEnv {
+        let state = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        // A shape-valid but unusable config (no relay, no agent_details): the
+        // daemon naps 30s per cycle holding the lock, which is all these tests
+        // need. A config that fails validation would now make the daemon exit
+        // immediately — exiting on operator error is the load contract — so
+        // the ids must stay well-formed even in a throwaway config.
+        std::fs::write(
+            config.path().join("config.toml"),
+            "device = \"test\"\nchat_id = -1001234567890\ntopic_id = 3\n",
+        )
+        .unwrap();
         TestEnv {
-            _state: tempfile::tempdir().unwrap(),
-            // no config.toml in it: the daemon naps on a config error but
-            // keeps holding the lock, which is all these tests need
-            _config: tempfile::tempdir().unwrap(),
+            _state: state,
+            _config: config,
         }
     }
 

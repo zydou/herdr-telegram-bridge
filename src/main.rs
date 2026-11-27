@@ -66,7 +66,7 @@ fn test_message() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if cfg.relay_url.is_empty() || cfg.relay_key.is_empty() || cfg.chat_id.is_empty() {
+    if cfg.relay_url.is_empty() || cfg.relay_key.is_empty() {
         eprintln!("relay not configured — see config.example.toml");
         return ExitCode::FAILURE;
     }

@@ -18,7 +18,7 @@ cp target/release/htb ~/bin/          # 任意 PATH 目录
 herdr plugin link ~/Projects/herdr/herdr-telegram-bridge
 ```
 
-配置（必填：`device`、`chat_id`、`topic_id`、`relay_url`、`relay_key`）：
+配置（必填：`device`、`chat_id`（-100 开头的负整数）、`topic_id`（正整数）、`relay_url`、`relay_key`；id 写错了 daemon 会带着指名道姓的报错直接退出，而不是空转）：
 
 ```sh
 cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"

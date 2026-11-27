@@ -2,10 +2,15 @@
 #   cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
 # 改完无需重启——守护进程每轮现读。
 
-# The id of your group chat (a negative number). All devices share ONE supergroup
-# with Topics enabled, and each device lands in its own topic (topic_id below).
-# To read the id: open any topic's link — t.me/c/<chat>/<id> — and prefix -100 to
-# the <chat> part.
+# The id of your group chat: a negative integer starting with -100 (Telegram's
+# supergroup form). All devices share ONE supergroup with Topics enabled, and
+# each device lands in its own topic (topic_id below). To read the id: open
+# any topic's link — t.me/c/<chat>/<id> — and prefix -100 to the <chat> part.
+# Both ids are validated at startup: anything that is not a -100-prefixed
+# integer (chat_id) or a positive integer (topic_id) makes the daemon exit
+# with an error naming the key — a typo'd config is an error to fix, not a
+# state to silently sit in. A quoted string spelling ("-1001234567890") also
+# works.
 chat_id = -1001234567890
 
 # --- relay -------------------------------------------------------------------
@@ -23,8 +28,8 @@ device = "4090"
 
 # Required: this machine's forum topic id — the trailing number of the topic's
 # link (t.me/c/<chat>/<id>). Create one topic per device in the group first;
-# every message lands in this topic. Without it the daemon naps until it is
-# configured.
+# every message lands in this topic. Must be a positive integer (a quoted
+# string spelling works too); anything else exits the daemon with an error.
 topic_id = 3
 
 # Optional: proxy for reaching the relay on workers.dev — an HTTP proxy

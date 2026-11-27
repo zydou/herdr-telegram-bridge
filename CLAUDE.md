@@ -69,7 +69,7 @@ POST /d/<device>/bot<RELAY_KEY>/<method>   # 设备出站，白名单转发 Tele
 
 ### 守护进程主循环（feed.rs）
 
-单线程采集循环，每 5s 一轮（`POLL_SECONDS`）——每轮现读配置 → listing 过期（≥5s）就刷一次 `herdr agent list`（刷新失败时对冻结列表继续扫，但 stale 超过 600s 每窗口报一次日志）→ 逐 pane resolve/tail/render → 按 pane 分桶 `thread::scope` 并发发送（**组内串行保序**=Telegram 到达顺序即阅读顺序，**组间并行**=一条慢 lane 不拖垮别的 pane——每条消息 RTT 几百毫秒，串行发送在多个活跃会话下会超周期）。配置不可用（缺 chat_id/topic_id/relay/agent_details）时 nap 30s。没有探活请求：每个发送都现读配置独立成调用，中继宕机时只有真实待发消息才产生重试。
+单线程采集循环，每 5s 一轮（`POLL_SECONDS`）——每轮现读配置 → listing 过期（≥5s）就刷一次 `herdr agent list`（刷新失败时对冻结列表继续扫，但 stale 超过 600s 每窗口报一次日志）→ 逐 pane resolve/tail/render → 按 pane 分桶 `thread::scope` 并发发送（**组内串行保序**=Telegram 到达顺序即阅读顺序，**组间并行**=一条慢 lane 不拖垮别的 pane——每条消息 RTT 几百毫秒，串行发送在多个活跃会话下会超周期）。配置分两级：**load 失败（文件读不了、TOML 语法坏、chat_id/topic_id 形状不合）记日志后 daemon 直接退出**——输错配置是操作者错误，nap 空转的 daemon 在 `htb status` 里和正常工作的一模一样；缺 relay 或 `agent_details` 为空只是「没配好/没人订阅」，nap 30s。没有探活请求：每个发送都现读配置独立成调用，中继宕机时只有真实待发消息才产生重试。
 
 ### 发送（telegram.rs）
 
@@ -105,7 +105,7 @@ herdr plugin logs --plugin htb             # herdr 侧命令执行日志（不�
 cp config.example.toml "$(herdr plugin config-dir htb)/config.toml"
 ```
 
-样例注释了全部键；开发最相关：`relay_url` / `relay_key` / `chat_id`（群组 id，必填）/ `topic_id`（本机消息落在哪个话题，必填，缺了守护进程 nap）、`agent_details`（推什么，空=不推）、`footer_format`（可含 token 用量占位符）、`device`（**必填**，每机唯一）、`proxy`（HTTP 或 SOCKS5 代理 URL）。类型是原生 TOML；chat_id 写整数或字符串都行（`loose_string`）。配置每轮现读，改完无需重启。
+样例注释了全部键；开发最相关：`relay_url` / `relay_key` / `chat_id`（**-100 开头的负整数**，超级群 id）/ `topic_id`（**正整数**，本机消息落在哪个话题）/ `agent_details`（推什么，空=不推）/ `footer_format`（可含 token 用量占位符）/ `device`（**必填**，每机唯一）/ `proxy`（HTTP 或 SOCKS5 代理 URL，空串=直连）。`chat_id`/`topic_id` 宽松读取（TOML 整数或能解析的字符串，`required_i64`）但**形状硬校验**：不合即 `Config::load` 返回 Err、daemon 记日志退出——它们是用户手打的 id，静默吞掉一个坏值就是让 feed 无声死亡（字符串 topic_id 曾静默折叠成 0，`htb status` 全绿却一条不推）；其余键原生 TOML 类型、缺失走 DEFAULTS。配置每轮现读，改完无需重启。
 
 ## 状态文件
 
