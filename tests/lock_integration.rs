@@ -55,7 +55,11 @@ fn wait_until(what: &str, mut probe: impl FnMut() -> bool) {
 
 fn status_running(env: &TestEnv) -> bool {
     let out = env.run("status").output().unwrap();
-    String::from_utf8_lossy(&out.stdout).contains("running")
+    // "daemon running", not bare "running": "htb daemon not running" contains
+    // the latter, and matching it made every wait_until pass instantly — the
+    // tests then raced two daemons for the lock instead of waiting for it to
+    // be held, which is where the hangs and the flaky pre-9s exits came from.
+    String::from_utf8_lossy(&out.stdout).contains("daemon running")
 }
 
 #[test]

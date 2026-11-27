@@ -35,17 +35,33 @@ fn open_lock(state: &Path) -> Option<File> {
 
 /// Acquire the singleton lock and stamp our pid. None when another daemon
 /// already holds it — the second instance exits quietly.
+///
+/// The try_lock is retried a few times over ~150ms: `htb status` probes the
+/// lock by taking and dropping it, and a fresh daemon whose single attempt
+/// lands inside one of those microsecond-long probe holds would exit for no
+/// reason — the classic lost race against an observer. A genuinely held lock
+/// outlasts the retries, so real exclusion is unaffected.
 pub fn acquire(state: &Path) -> Option<File> {
-    let mut f = open_lock(state)?;
-    f.try_lock().ok()?; // exclusive, non-blocking; released by close/death
-    let _ = f.set_len(0);
-    let _ = f.rewind();
-    let _ = f.write_all(std::process::id().to_string().as_bytes());
-    Some(f)
+    for attempt in 0..4 {
+        let mut f = open_lock(state)?;
+        if f.try_lock().is_ok() {
+            let _ = f.set_len(0);
+            let _ = f.rewind();
+            let _ = f.write_all(std::process::id().to_string().as_bytes());
+            return Some(f);
+        }
+        if attempt < 3 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    None
 }
 
 /// Whether a daemon holds the lock. The probe takes it and drops it — the
-/// release rides on the fd's close.
+/// release rides on the fd's close. The flock is the whole verdict: an
+/// acquire window (lock taken, pid not yet stamped) is invisible here and
+/// harmless, since the next acquirer's try_lock simply fails; a dead daemon
+/// releases the lock with its last breath.
 pub fn is_running(state: &Path) -> bool {
     let Some(f) = open_lock(state) else {
         return false;
