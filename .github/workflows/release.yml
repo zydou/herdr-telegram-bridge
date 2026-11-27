@@ -98,8 +98,8 @@ jobs:
           # The aarch64-linux targets build on a native arm64 runner (ubuntu-26.04-arm) rather than
           # cross-compiling on x86_64. zigbuild still applies the gnu glibc pin, but it no longer
           # needs QEMU — the runner's arch matches the target, so it builds natively AND can run the
-          # aarch64 test binary directly. That is why every target in this matrix sets no `test`
-          # flag: each one executes on a runner whose arch matches it, so all of them run tests.
+          # aarch64 test binary directly. No `test` flag appears in this matrix: where tests run at
+          # all (the gnu/darwin targets), each executes on a runner whose ABI matches it.
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-26.04-arm
             zig: true
@@ -146,12 +146,18 @@ jobs:
       - name: cache
         uses: Swatinem/rust-cache@v2
 
-      # Plain `cargo test`, not `cargo zigbuild test`: `cargo zigbuild` only wraps `cargo build`
-      # (it drives zig as the linker for cross-compiling), and has no `test` subcommand. Every
-      # target here runs on a runner whose arch matches it, so each tests natively and zig is not
-      # involved in testing at all. The build step below is where the gnu targets' `.2.18` glibc
-      # pin is actually applied.
+      # Plain `cargo test`: every gnu/darwin target runs on a runner whose ABI
+      # matches it, so those tests build and run with the runner's own toolchain.
+      # The musl targets skip tests: ring's C parts go through cc-rs, which wants
+      # a C compiler for the target ABI, and plain `cargo test` never sees the zig
+      # wrapper environment that `cargo zigbuild` (the build step below) injects
+      # only into its own invocation — its stable release has no test passthrough.
+      # Their coverage is carried by the gnu targets (same OS, same arch; the libc
+      # difference lives in the linking layer), and the built musl binary still
+      # gets executed for real by the smoke test below — a static binary runs
+      # anywhere.
       - name: Test ${{ matrix.target }}
+        if: ${{ !endsWith(matrix.target, '-musl') }}
         run: cargo test --locked --all-targets --target ${{ matrix.target }}
 
       # Everything below is skipped on pull requests: they get the test signal above
