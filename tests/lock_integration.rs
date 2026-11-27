@@ -64,9 +64,25 @@ fn second_daemon_exits_and_stop_releases_the_lock() {
     let mut first = env.spawn_daemon();
     wait_until("daemon to take the lock", || status_running(&env));
 
-    // a second daemon must refuse and exit non-zero, the first keeps running
-    let second = env.spawn_daemon().wait_with_output().unwrap();
-    assert!(!second.status.success(), "second daemon must not succeed");
+    // a second daemon must refuse and exit non-zero, the first keeps running.
+    // The wait is bounded: a second daemon the lock somehow failed to exclude
+    // settles into the daemon loop and never exits on its own, which would
+    // hang this test forever — kill it after the deadline and fail loudly
+    // with the diagnosis instead.
+    let mut second = env.spawn_daemon();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let second_status = loop {
+        match second.try_wait().unwrap() {
+            Some(status) => break status,
+            None if Instant::now() > deadline => {
+                let _ = second.kill();
+                let _ = second.wait();
+                panic!("second daemon still running after 30s — the lock failed to exclude it");
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    };
+    assert!(!second_status.success(), "second daemon must not succeed");
     assert!(
         first.try_wait().unwrap().is_none(),
         "first daemon must survive"
